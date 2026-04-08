@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
-from sqlalchemy import String, BigInteger, DateTime, ForeignKey, Text
+from sqlalchemy import String, BigInteger, DateTime, ForeignKey, Text, Numeric
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Mapped, mapped_column, relationship
 
@@ -82,7 +82,7 @@ class Transaction(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     wallet_id: Mapped[str] = mapped_column(String(36), ForeignKey("wallets.id"), nullable=False)
-    tx_hash: Mapped[str] = mapped_column(String(66), unique=True, nullable=False)
+    tx_hash: Mapped[str] = mapped_column(String(66), nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     from_address: Mapped[str] = mapped_column(String(42), nullable=False)
     to_address: Mapped[str] = mapped_column(String(42), nullable=False)
@@ -104,6 +104,26 @@ class AdminWallet(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    avax_transactions: Mapped[list["AdminTransaction"]] = relationship("AdminTransaction", back_populates="admin_wallet")
+
+
+class AdminTransaction(Base):
+    __tablename__ = "admin_transactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    admin_wallet_id: Mapped[str] = mapped_column(String(36), ForeignKey("admin_wallet.id"), nullable=False)
+    tx_hash: Mapped[str] = mapped_column(String(66), nullable=False)
+    type: Mapped[str] = mapped_column(String(20), nullable=False)
+    from_address: Mapped[str] = mapped_column(String(42), nullable=False)
+    to_address: Mapped[str] = mapped_column(String(42), nullable=False)
+    amount: Mapped[int] = mapped_column(Numeric(78, 0), nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    token: Mapped[str] = mapped_column(String(10), nullable=False, default="AVAX")
+    status: Mapped[str] = mapped_column(String(20), default="confirmed")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    admin_wallet: Mapped["AdminWallet"] = relationship("AdminWallet", back_populates="avax_transactions")
 
 
 @asynccontextmanager

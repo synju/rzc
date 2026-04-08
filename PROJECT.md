@@ -12,7 +12,7 @@ RZC is a cryptocurrency token system built on Avalanche C-Chain with:
 
 ### Components
 
-1. **Smart Contract**: See `private.md` (RZC Token on Avalanche C-Chain)
+1. **Smart Contract**: See `PRIVATE.md` (RZC Token on Avalanche C-Chain)
 2. **Backend**: FastAPI on port 8001
 3. **Frontend Web**: Vue.js dev server on port 5173
 4. **Mobile App**: Capacitor-built Android app
@@ -134,6 +134,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 **Solution**: Added `is_admin` to `/auth/me` response and frontend stores.
 
+### 7. SQLAlchemy MissingGreenlet Error
+**Problem**: After `await db.commit()`, ORM objects become expired. Accessing attributes later (e.g., `admin.address`) triggers lazy loading which fails in async context.
+
+**Solution**: 
+- Extract all needed values from ORM objects BEFORE async operations
+- Use `update()` statements instead of mutating ORM objects directly
+- All routers and background_sync log errors to `error.log`
+
+## Error Logging
+
+All backend errors are logged to `error.log` in `core-backend/` with full traceback:
+- Server startup clears the log
+- All router endpoints log exceptions
+- Background sync errors are captured
+
 ## API Endpoints
 
 ### Auth
@@ -208,10 +223,28 @@ Uses `import.meta.env.VITE_API_URL` for Browser plugin login - NOT hardcoded
 3. **Backend uses NullPool** - This was necessary to fix async connection issues
 4. **Frontend needs vite restart** - After .env changes
 5. **Mobile needs rebuild** - After code or .env changes (in `...../rzc/core-mobile-frontend/`): `npm run build && npx cap sync android`
-6. **Private credentials** - See `private.md` (DO NOT COMMIT)
+6. **Private credentials** - See `PRIVATE.md` (DO NOT COMMIT)
+7. **Error log** - Check `core-backend/error.log` for backend errors with full traceback
 
 ## Testing Admin Features
 
-1. Login with admin email (see `private.md`)
+1. Login with admin email (see `PRIVATE.md`)
 2. Click "Admin" button in header
 3. View admin wallet balances (AVAX + RZC)
+
+## Tracking Transactions on Snowtrace
+
+**Avalanche C-Chain Explorer**: https://snowtrace.io
+
+### To track a transaction:
+- Paste the `tx_hash` from the response into Snowtrace's search bar
+- Example: `https://snowtrace.io/tx/0x...`
+
+### To track an address:
+- Paste any wallet address to see its token balances and history
+- Example: `https://snowtrace.io/address/0x...`
+
+### Network Details
+- **Network**: Avalanche C-Chain
+- **Chain ID**: 43114
+- **RZC Token Contract**: See `PRIVATE.md`

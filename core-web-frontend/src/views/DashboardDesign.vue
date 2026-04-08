@@ -48,10 +48,6 @@
             <span class="action-icon">💲</span>
             <span class="action-label">Buy RZC</span>
           </button>
-          <button @click="showRecreateModal = true" class="action-btn danger">
-            <span class="action-icon">⚠️</span>
-            <span class="action-label">Recreate Wallet</span>
-          </button>
         </div>
       </div>
 
@@ -69,6 +65,8 @@
               <div class="tx-details">
                 <span class="tx-type-label">{{ tx.type === 'received' ? 'Received' : 'Sent' }}</span>
                 <span class="tx-hash">{{ tx.tx_hash.slice(0, 10) }}...{{ tx.tx_hash.slice(-6) }}</span>
+                <a v-if="tx.tx_hash.startsWith('0x')" :href="`https://snowtrace.io/tx/${tx.tx_hash}`" target="_blank" class="snowtrace-link">View on Snowtrace</a>
+                <span v-else class="internal-label">Internal Transfer</span>
               </div>
               <div class="tx-amount" :class="tx.type">
                 {{ tx.type === 'received' ? '+' : '-' }}{{ formatBalance(tx.amount) }} RZC
@@ -142,24 +140,6 @@
       </div>
     </div>
 
-    <div v-if="showRecreateModal" class="modal-overlay" @click.self="showRecreateModal = false">
-      <div class="modal">
-        <h3>Recreate Wallet</h3>
-        <p class="warning-text">This will delete your current wallet and create a new one. Make sure you have transferred any funds!</p>
-        <div class="form-group">
-          <label>Type <strong>RECREATE WALLET</strong> to confirm:</label>
-          <input v-model="recreateConfirm" type="text" placeholder="RECREATE WALLET" class="form-input" />
-        </div>
-        <p v-if="recreateError" class="error">{{ recreateError }}</p>
-        <div class="modal-actions">
-          <button @click="showRecreateModal = false" class="btn btn-secondary">Cancel</button>
-          <button @click="recreateWallet" class="btn btn-danger" :disabled="recreateConfirm !== 'RECREATE WALLET' || recreating">
-            {{ recreating ? 'Recreating...' : 'Recreate Wallet' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
     <div v-if="showBuyModal" class="modal-overlay" @click.self="showBuyModal = false">
       <div class="modal">
         <h3>Buy RZC</h3>
@@ -194,10 +174,6 @@ const recipients = ref([])
 const newRecipient = ref({ name: '', address: '' })
 const recipientError = ref('')
 const recipientSearch = ref('')
-const showRecreateModal = ref(false)
-const recreateConfirm = ref('')
-const recreating = ref(false)
-const recreateError = ref('')
 const showBuyModal = ref(false)
 
 const filteredRecipients = computed(() => {
@@ -223,24 +199,6 @@ const createWallet = async () => {
   try {
     await authStore.createWallet()
   } catch (e) {
-  }
-}
-
-const recreateWallet = async () => {
-  recreating.value = true
-  recreateError.value = ''
-  try {
-    const response = await walletApi.recreateWallet()
-    authStore.wallet = {
-      address: response.data.address,
-      balance: 0
-    }
-    showRecreateModal.value = false
-    recreateConfirm.value = ''
-  } catch (e) {
-    recreateError.value = e.response?.data?.detail || 'Failed to recreate wallet'
-  } finally {
-    recreating.value = false
   }
 }
 
@@ -682,6 +640,23 @@ onMounted(async () => {
   font-size: 0.75rem;
   color: #555;
   font-family: monospace;
+}
+
+.snowtrace-link {
+  font-size: 0.7rem;
+  color: #00d4ff;
+  text-decoration: none;
+  margin-top: 0.25rem;
+}
+
+.snowtrace-link:hover {
+  text-decoration: underline;
+}
+
+.internal-label {
+  font-size: 0.7rem;
+  color: #888;
+  margin-top: 0.25rem;
 }
 
 .tx-amount {

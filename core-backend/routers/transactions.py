@@ -1,3 +1,5 @@
+import traceback
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -6,6 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import engine, User, Wallet, Transaction, AdminWallet, settings
 from routers.auth import get_current_user
 from routers.wallet import decrypt_private_key
+
+ERROR_LOG = "error.log"
+
+
+def log_error(msg: str):
+    with open(ERROR_LOG, "a") as f:
+        f.write(f"{msg}\n")
+        f.write(traceback.format_exc())
+        f.write("\n")
 
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -174,57 +185,68 @@ async def send_rzc(
     request: TransferRequest,
     current_user: User = Depends(get_current_user)
 ):
-    async with AsyncSession(engine) as db:
-        admin_result = await db.execute(select(AdminWallet).where(AdminWallet.is_active == True))
-        admin = admin_result.scalar_one_or_none()
+    try:
+        async with AsyncSession(engine) as db:
+            admin_result = await db.execute(select(AdminWallet).where(AdminWallet.is_active == True))
+            admin = admin_result.scalar_one_or_none()
 
-        if not admin:
-            raise HTTPException(status_code=404, detail="Relayer not available")
+            if not admin:
+                raise HTTPException(status_code=404, detail="Relayer not available")
 
-        if admin.avax_balance < 50000000000000000:
-            raise HTTPException(status_code=400, detail="Insufficient AVAX in relayer for gas")
+            if admin.avax_balance < 50000000000000000:
+                raise HTTPException(status_code=400, detail="Insufficient AVAX in relayer for gas")
 
-        wallet_result = await db.execute(
-            select(Wallet).where(Wallet.user_id == current_user.id, Wallet.is_active == True)
-        )
-        wallet = wallet_result.scalar_one_or_none()
+            wallet_result = await db.execute(
+                select(Wallet).where(Wallet.user_id == current_user.id, Wallet.is_active == True)
+            )
+            wallet = wallet_result.scalar_one_or_none()
 
-        if wallet is None or not wallet.address:
-            raise HTTPException(status_code=404, detail="Wallet not found")
+            if wallet is None or not wallet.address:
+                raise HTTPException(status_code=404, detail="Wallet not found")
 
-        if wallet.balance < request.amount:
-            raise HTTPException(status_code=400, detail="Insufficient balance")
+            if wallet.balance < request.amount:
+                raise HTTPException(status_code=400, detail="Insufficient balance")
 
-        if len(request.to_address) != 42 or not request.to_address.startswith("0x"):
-            raise HTTPException(status_code=400, detail="Invalid recipient address")
+            if len(request.to_address) != 42 or not request.to_address.startswith("0x"):
+                raise HTTPException(status_code=400, detail="Invalid recipient address")
 
-        recipient_result = await db.execute(
-            select(Wallet).where(Wallet.address == request.to_address)
-        )
-        recipient_wallet = recipient_result.scalar_one_or_none()
+            recipient_result = await db.execute(
+                select(Wallet).where(Wallet.address == request.to_address)
+            )
+            recipient_wallet = recipient_result.scalar_one_or_none()
 
-        if recipient_wallet and recipient_wallet.user_id == current_user.id:
-            raise HTTPException(status_code=400, detail="Use internal-transfer for sending to your own wallets")
+            if recipient_wallet and recipient_wallet.user_id == current_user.id:
+                raise HTTPException(status_code=400, detail="Use internal-transfer for sending to your own wallets")
 
-        try:
+            admin_address = admin.address
+            admin_id = admin.id
+            wallet_id = wallet.id
+            wallet_address = wallet.address
+            admin_encrypted_pk = admin.encrypted_private_key
+
             rpc_url = "https://avalanche-c-chain-rpc.publicnode.com"
-            private_key = decrypt_private_key(admin.encrypted_private_key, settings.encryption_key)
+            private_key = decrypt_private_key(admin_encrypted_pk, settings.encryption_key)
             tx_hash, gas_fee = await send_transaction_relayer(
-                admin.address,
+                admin_address,
                 request.to_address,
                 request.amount,
                 "0x" + private_key,
                 rpc_url
             )
 
-            admin.avax_balance -= gas_fee
-            wallet.balance -= request.amount
+            from sqlalchemy import update
+            await db.execute(
+                update(AdminWallet).where(AdminWallet.id == admin_id).values(avax_balance=admin.avax_balance - gas_fee)
+            )
+            await db.execute(
+                update(Wallet).where(Wallet.id == wallet_id).values(balance=wallet.balance - request.amount)
+            )
 
             tx_record = Transaction(
-                wallet_id=wallet.id,
+                wallet_id=wallet_id,
                 tx_hash=tx_hash,
                 type="sent",
-                from_address=wallet.address,
+                from_address=wallet_address,
                 to_address=request.to_address,
                 amount=request.amount,
                 status="confirmed"
@@ -236,13 +258,16 @@ async def send_rzc(
             return TransferResponse(
                 success=True,
                 tx_hash=tx_hash,
-                from_address=wallet.address,
+                from_address=wallet_address,
                 to_address=request.to_address,
                 amount=request.amount,
                 type="sent"
             )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Transactions] send_rzc error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/internal-transfer", response_model=TransferResponse)
@@ -280,9 +305,10 @@ async def internal_transfer(
         from_wallet.balance -= amount
         to_wallet.balance += amount
 
+        internal_id = str(uuid4())
         tx_record = Transaction(
             wallet_id=from_wallet.id,
-            tx_hash=f"internal-{from_wallet.id}-{to_wallet.id}-{amount}",
+            tx_hash=f"internal-{internal_id}",
             type="sent",
             from_address=from_address,
             to_address=to_address,
@@ -293,7 +319,7 @@ async def internal_transfer(
 
         tx_record_received = Transaction(
             wallet_id=to_wallet.id,
-            tx_hash=f"internal-{from_wallet.id}-{to_wallet.id}-{amount}",
+            tx_hash=f"internal-{internal_id}",
             type="received",
             from_address=from_address,
             to_address=to_address,
@@ -348,74 +374,83 @@ async def get_history(current_user: User = Depends(get_current_user)):
 
 @router.post("/sync-transactions")
 async def sync_transactions(current_user: User = Depends(get_current_user)):
-    async with AsyncSession(engine) as db:
-        result = await db.execute(
-            select(Wallet).where(Wallet.user_id == current_user.id, Wallet.is_active == True)
-        )
-        wallet = result.scalar_one_or_none()
-
-        if wallet is None or not wallet.address:
-            raise HTTPException(status_code=404, detail="Wallet not found")
-
-        from httpx import AsyncClient
-        rpc_url = "https://avalanche-c-chain-rpc.publicnode.com"
-
-        async with AsyncClient() as client:
-            block_response = await client.post(rpc_url, json={
-                "jsonrpc": "2.0",
-                "method": "eth_blockNumber",
-                "params": [],
-                "id": 1
-            })
-            current_block = int(block_response.json()["result"], 16)
-            from_block = max(0, current_block - 1000)
-
-            response = await client.post(rpc_url, json={
-                "jsonrpc": "2.0",
-                "method": "eth_getLogs",
-                "params": [{
-                    "fromBlock": hex(from_block),
-                    "toBlock": hex(current_block),
-                    "address": "0x8583645670154b3bc3f9c48a1864261fd1f26758",
-                    "topics": [
-                        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-                        None,
-                        "0x" + wallet.address.lower().replace("0x", "").zfill(64)
-                    ]
-                }],
-                "id": 1
-            })
-
-        result_data = response.json()
-        logs = result_data.get("result", [])
-
-        new_tx_count = 0
-        for log in logs:
-            tx_hash = log["transactionHash"]
-            
-            existing = await db.execute(select(Transaction).where(Transaction.tx_hash == tx_hash))
-            if existing.scalar_one_or_none():
-                continue
-
-            block_number = int(log["blockNumber"][2:], 16)
-            data = log["data"][2:]
-            amount = int(data[:64], 16) if len(data) >= 64 else 0
-            from_address = "0x" + log["topics"][1][26:]
-            to_address = "0x" + log["topics"][2][26:]
-
-            tx_record = Transaction(
-                wallet_id=wallet.id,
-                tx_hash=tx_hash,
-                type="received",
-                from_address=from_address,
-                to_address=to_address,
-                amount=amount,
-                block_number=block_number,
-                status="confirmed"
+    try:
+        async with AsyncSession(engine) as db:
+            result = await db.execute(
+                select(Wallet).where(Wallet.user_id == current_user.id, Wallet.is_active == True)
             )
-            db.add(tx_record)
-            new_tx_count += 1
+            wallet = result.scalar_one_or_none()
 
-        await db.commit()
+            if wallet is None or not wallet.address:
+                raise HTTPException(status_code=404, detail="Wallet not found")
 
-        return {"message": f"Synced {new_tx_count} new transactions"}
+            wallet_id = wallet.id
+            wallet_address = wallet.address
+
+            from httpx import AsyncClient
+            rpc_url = "https://avalanche-c-chain-rpc.publicnode.com"
+
+            async with AsyncClient() as client:
+                block_response = await client.post(rpc_url, json={
+                    "jsonrpc": "2.0",
+                    "method": "eth_blockNumber",
+                    "params": [],
+                    "id": 1
+                })
+                current_block = int(block_response.json()["result"], 16)
+                from_block = max(0, current_block - 1000)
+
+                response = await client.post(rpc_url, json={
+                    "jsonrpc": "2.0",
+                    "method": "eth_getLogs",
+                    "params": [{
+                        "fromBlock": hex(from_block),
+                        "toBlock": hex(current_block),
+                        "address": "0x8583645670154b3bc3f9c48a1864261fd1f26758",
+                        "topics": [
+                            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                            None,
+                            "0x" + wallet_address.lower().replace("0x", "").zfill(64)
+                        ]
+                    }],
+                    "id": 1
+                })
+
+            result_data = response.json()
+            logs = result_data.get("result", [])
+
+            new_tx_count = 0
+            for log in logs:
+                tx_hash = log["transactionHash"]
+                
+                existing = await db.execute(select(Transaction).where(Transaction.tx_hash == tx_hash))
+                if existing.scalar_one_or_none():
+                    continue
+
+                block_number = int(log["blockNumber"][2:], 16)
+                data = log["data"][2:]
+                amount = int(data[:64], 16) if len(data) >= 64 else 0
+                from_address = "0x" + log["topics"][1][26:]
+                to_address = "0x" + log["topics"][2][26:]
+
+                tx_record = Transaction(
+                    wallet_id=wallet_id,
+                    tx_hash=tx_hash,
+                    type="received",
+                    from_address=from_address,
+                    to_address=to_address,
+                    amount=amount,
+                    block_number=block_number,
+                    status="confirmed"
+                )
+                db.add(tx_record)
+                new_tx_count += 1
+
+            await db.commit()
+
+            return {"message": f"Synced {new_tx_count} new transactions"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Transactions] sync_transactions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,4 +1,5 @@
 import secrets
+import traceback
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -12,6 +13,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, User, Wallet, settings
+
+ERROR_LOG = "error.log"
+
+
+def log_error(msg: str):
+    with open(ERROR_LOG, "a") as f:
+        f.write(f"{msg}\n")
+        f.write(traceback.format_exc())
+        f.write("\n")
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -74,58 +84,62 @@ async def google_login():
 
 @router.get("/google/callback")
 async def google_callback(code: str, response: Response):
-    # First: exchange code for tokens via httpx OUTSIDE of db session
-    from httpx import AsyncClient
-    token_url = "https://oauth2.googleapis.com/token"
-
-    async with AsyncClient() as client:
-        token_response = await client.post(token_url, data={
-            "code": code,
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.google_redirect_uri,
-            "grant_type": "authorization_code"
-        })
-
-    if token_response.status_code != 200:
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_response.text}")
-
-    token_data = token_response.json()
-    id_token_str = token_data.get("id_token")
-
     try:
-        id_info = id_token.verify_oauth2_token(id_token_str, google_requests.Request(), audience=settings.google_client_id)
-    except Exception:
-        import base64
-        import json
-        parts = id_token_str.split('.')
-        padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
-        id_info = json.loads(base64.urlsafe_b64decode(padded))
+        from httpx import AsyncClient
+        token_url = "https://oauth2.googleapis.com/token"
 
-    email = id_info["email"]
-    google_id = id_info["sub"]
+        async with AsyncClient() as client:
+            token_response = await client.post(token_url, data={
+                "code": code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": settings.google_redirect_uri,
+                "grant_type": "authorization_code"
+            })
 
-    # Second: use db session ONLY for database operations
-    async with AsyncSession(engine) as db:
-        result = await db.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
+        if token_response.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_response.text}")
 
-        if user is None:
-            user = User(
-                email=email,
-                google_id=google_id,
-                encrypted_wallet_blob=None
-            )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-        elif user.google_id != google_id:
-            raise HTTPException(status_code=400, detail="Google ID mismatch")
+        token_data = token_response.json()
+        id_token_str = token_data.get("id_token")
 
-        access_token = create_access_token({"sub": user.id, "email": user.email})
+        try:
+            id_info = id_token.verify_oauth2_token(id_token_str, google_requests.Request(), audience=settings.google_client_id)
+        except Exception:
+            import base64
+            import json
+            parts = id_token_str.split('.')
+            padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
+            id_info = json.loads(base64.urlsafe_b64decode(padded))
 
-        callback_url = f"{get_base_url()}/auth/callback?token={access_token}"
-        return RedirectResponse(url=callback_url, status_code=302)
+        email = id_info["email"]
+        google_id = id_info["sub"]
+
+        async with AsyncSession(engine) as db:
+            result = await db.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                user = User(
+                    email=email,
+                    google_id=google_id,
+                    encrypted_wallet_blob=None
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+            elif user.google_id != google_id:
+                raise HTTPException(status_code=400, detail="Google ID mismatch")
+
+            access_token = create_access_token({"sub": user.id, "email": user.email})
+
+            callback_url = f"{get_base_url()}/auth/callback?token={access_token}"
+            return RedirectResponse(url=callback_url, status_code=302)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Auth] google_callback error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/me")
@@ -152,26 +166,32 @@ class MobileGoogleAuth(BaseModel):
 
 @router.post("/google-mobile")
 async def google_mobile_auth(request: MobileGoogleAuth):
-    async with AsyncSession(engine) as db:
-        result = await db.execute(select(User).where(User.email == request.email))
-        user = result.scalar_one_or_none()
+    try:
+        async with AsyncSession(engine) as db:
+            result = await db.execute(select(User).where(User.email == request.email))
+            user = result.scalar_one_or_none()
 
-        if user is None:
-            user = User(
-                email=request.email,
-                google_id=request.google_id,
-                encrypted_wallet_blob=None
-            )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-        elif user.google_id != request.google_id:
-            raise HTTPException(status_code=400, detail="Google ID mismatch")
+            if user is None:
+                user = User(
+                    email=request.email,
+                    google_id=request.google_id,
+                    encrypted_wallet_blob=None
+                )
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+            elif user.google_id != request.google_id:
+                raise HTTPException(status_code=400, detail="Google ID mismatch")
 
-        access_token = create_access_token({"sub": user.id, "email": user.email})
+            access_token = create_access_token({"sub": user.id, "email": user.email})
 
-        return {
-            "token": access_token,
-            "user_id": user.id,
-            "email": user.email
-        }
+            return {
+                "token": access_token,
+                "user_id": user.id,
+                "email": user.email
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Auth] google_mobile_auth error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,3 +1,4 @@
+import traceback
 from eth_account import Account
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -6,6 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, User, Wallet
 from routers.auth import get_current_user
+
+ERROR_LOG = "error.log"
+
+
+def log_error(msg: str):
+    with open(ERROR_LOG, "a") as f:
+        f.write(f"{msg}\n")
+        f.write(traceback.format_exc())
+        f.write("\n")
 
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
@@ -106,23 +116,33 @@ async def create_wallet(request: CreateWalletRequest, current_user: User = Depen
 
 @router.post("/switch/{wallet_id}")
 async def switch_wallet(wallet_id: str, current_user: User = Depends(get_current_user)):
-    async with AsyncSession(engine) as db:
-        result = await db.execute(select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == current_user.id))
-        wallet = result.scalar_one_or_none()
+    try:
+        async with AsyncSession(engine) as db:
+            result = await db.execute(select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == current_user.id))
+            wallet = result.scalar_one_or_none()
 
-        if wallet is None:
-            raise HTTPException(status_code=404, detail="Wallet not found")
+            if wallet is None:
+                raise HTTPException(status_code=404, detail="Wallet not found")
 
-        await db.execute(
-            update(Wallet)
-            .where(Wallet.user_id == current_user.id)
-            .values(is_active=False)
-        )
+            await db.execute(
+                update(Wallet)
+                .where(Wallet.user_id == current_user.id)
+                .values(is_active=False)
+            )
 
-        wallet.is_active = True
-        await db.commit()
+            await db.execute(
+                update(Wallet)
+                .where(Wallet.id == wallet_id)
+                .values(is_active=True)
+            )
+            await db.commit()
 
-        return {"message": "Wallet switched successfully", "wallet_id": wallet_id}
+            return {"message": "Wallet switched successfully", "wallet_id": wallet_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Wallet] switch_wallet error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/balance")
@@ -145,52 +165,61 @@ async def get_balance(current_user: User = Depends(get_current_user)):
 
 @router.post("/sync-balance")
 async def sync_balance(current_user: User = Depends(get_current_user)):
-    async with AsyncSession(engine) as db:
-        result = await db.execute(
-            select(Wallet).where(Wallet.user_id == current_user.id, Wallet.is_active == True)
-        )
-        wallet = result.scalar_one_or_none()
+    try:
+        async with AsyncSession(engine) as db:
+            result = await db.execute(
+                select(Wallet).where(Wallet.user_id == current_user.id, Wallet.is_active == True)
+            )
+            wallet = result.scalar_one_or_none()
 
-        if wallet is None or not wallet.address:
-            raise HTTPException(status_code=404, detail="Wallet not found")
+            if wallet is None or not wallet.address:
+                raise HTTPException(status_code=404, detail="Wallet not found")
 
-        wallet_address = wallet.address
+            wallet_id = wallet.id
+            wallet_address = wallet.address
 
-        contract_address = "0x8583645670154b3bc3f9c48a1864261fd1f26758"
-        rpc_url = "https://avalanche-c-chain-rpc.publicnode.com"
+            contract_address = "0x8583645670154b3bc3f9c48a1864261fd1f26758"
+            rpc_url = "https://avalanche-c-chain-rpc.publicnode.com"
 
-        selector = "0x70a08231"
-        address_hex = wallet_address[2:].lower().zfill(64)
-        data = selector + address_hex
+            selector = "0x70a08231"
+            address_hex = wallet_address[2:].lower().zfill(64)
+            data = selector + address_hex
 
-        from httpx import AsyncClient
-        async with AsyncClient() as client:
-            response = await client.post(rpc_url, json={
-                "jsonrpc": "2.0",
-                "method": "eth_call",
-                "params": [{"to": contract_address, "data": data}, "latest"],
-                "id": 1
-            })
+            from httpx import AsyncClient
+            async with AsyncClient() as client:
+                response = await client.post(rpc_url, json={
+                    "jsonrpc": "2.0",
+                    "method": "eth_call",
+                    "params": [{"to": contract_address, "data": data}, "latest"],
+                    "id": 1
+                })
 
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Failed to fetch balance from blockchain")
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Failed to fetch balance from blockchain")
 
-        result_data = response.json()
+            result_data = response.json()
 
-        if "error" in result_data:
-            raise HTTPException(status_code=500, detail=f"RPC error: {result_data['error']}")
+            if "error" in result_data:
+                raise HTTPException(status_code=500, detail=f"RPC error: {result_data['error']}")
 
-        balance_hex = result_data.get("result", "0x0")
+            balance_hex = result_data.get("result", "0x0")
 
-        if not balance_hex or len(balance_hex) <= 2:
-            balance = 0
-        else:
-            balance = int(balance_hex, 16)
+            if not balance_hex or len(balance_hex) <= 2:
+                balance = 0
+            else:
+                balance = int(balance_hex, 16)
 
-        wallet.balance = balance
-        await db.commit()
+            await db.execute(
+                update(Wallet).where(Wallet.id == wallet_id).values(balance=balance)
+            )
+            await db.commit()
 
-        return {"address": wallet_address, "balance": balance}
+            return {"address": wallet_address, "balance": balance}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Wallet] sync_balance error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.patch("/{wallet_id}")
@@ -214,53 +243,71 @@ async def rename_wallet(wallet_id: str, request: dict, current_user: User = Depe
 
 @router.delete("/{wallet_id}")
 async def delete_wallet(wallet_id: str, current_user: User = Depends(get_current_user)):
-    async with AsyncSession(engine) as db:
-        result = await db.execute(select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == current_user.id))
-        wallet = result.scalar_one_or_none()
+    try:
+        async with AsyncSession(engine) as db:
+            result = await db.execute(select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == current_user.id))
+            wallet = result.scalar_one_or_none()
 
-        if wallet is None:
-            raise HTTPException(status_code=404, detail="Wallet not found")
+            if wallet is None:
+                raise HTTPException(status_code=404, detail="Wallet not found")
 
-        was_active = wallet.is_active
-        await db.execute(delete(Wallet).where(Wallet.id == wallet_id))
+            was_active = wallet.is_active
+            await db.execute(delete(Wallet).where(Wallet.id == wallet_id))
 
-        if was_active:
-            remaining_result = await db.execute(
-                select(Wallet).where(Wallet.user_id == current_user.id).limit(1)
-            )
-            remaining_wallet = remaining_result.scalar_one_or_none()
-            if remaining_wallet:
-                remaining_wallet.is_active = True
+            if was_active:
+                remaining_result = await db.execute(
+                    select(Wallet).where(Wallet.user_id == current_user.id).limit(1)
+                )
+                remaining_wallet = remaining_result.scalar_one_or_none()
+                if remaining_wallet:
+                    await db.execute(
+                        update(Wallet).where(Wallet.id == remaining_wallet.id).values(is_active=True)
+                    )
 
-        await db.commit()
+            await db.commit()
 
-        return {"message": "Wallet deleted successfully"}
+            return {"message": "Wallet deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Wallet] delete_wallet error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/recreate/{wallet_id}", response_model=CreateWalletResponse)
 async def recreate_wallet(wallet_id: str, current_user: User = Depends(get_current_user)):
-    async with AsyncSession(engine) as db:
-        result = await db.execute(select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == current_user.id))
-        wallet = result.scalar_one_or_none()
+    try:
+        async with AsyncSession(engine) as db:
+            result = await db.execute(select(Wallet).where(Wallet.id == wallet_id, Wallet.user_id == current_user.id))
+            wallet = result.scalar_one_or_none()
 
-        if wallet is None:
-            raise HTTPException(status_code=404, detail="Wallet not found")
+            if wallet is None:
+                raise HTTPException(status_code=404, detail="Wallet not found")
 
-        wallet.encrypted_wallet_blob = None
+            wallet_name = wallet.name
 
-        acct = Account.create()
-        encrypted_pk = encrypt_private_key(acct.key.hex(), current_user.id)
+            acct = Account.create()
+            encrypted_pk = encrypt_private_key(acct.key.hex(), current_user.id)
 
-        wallet.encrypted_wallet_blob = encrypted_pk
-        wallet.address = acct.address
-        wallet.balance = 0
+            await db.execute(
+                update(Wallet)
+                .where(Wallet.id == wallet_id)
+                .values(
+                    encrypted_wallet_blob=encrypted_pk,
+                    address=acct.address,
+                    balance=0
+                )
+            )
+            await db.commit()
 
-        await db.commit()
-        await db.refresh(wallet)
-
-        return CreateWalletResponse(
-            id=wallet.id,
-            name=wallet.name,
-            address=wallet.address,
-            encrypted_private_key=encrypted_pk
-        )
+            return CreateWalletResponse(
+                id=wallet_id,
+                name=wallet_name,
+                address=acct.address,
+                encrypted_private_key=encrypted_pk
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"[Wallet] recreate_wallet error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

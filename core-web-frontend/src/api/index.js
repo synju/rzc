@@ -68,7 +68,9 @@ export const transactionsApi = {
     amount: amount
   }),
 
-  getHistory: () => api.get('/transactions/history')
+  getHistory: () => api.get('/transactions/history'),
+
+  syncTransactions: () => api.post('/transactions/sync-transactions')
 }
 
 export const recipientsApi = {
@@ -89,7 +91,11 @@ export const adminApi = {
 
   getRzcBalance: () => api.get('/admin/wallet/rzc-balance'),
 
-  getAllWallets: () => api.get('/admin/wallets')
+  getAllWallets: () => api.get('/admin/wallets'),
+
+  getAdminTransactions: () => api.get('/admin/transactions'),
+
+  syncAdminTransactions: () => api.post('/admin/sync-transactions')
 }
 
 export default api

@@ -2,6 +2,10 @@
 
 > **Full documentation**: See `...../rzc/PROJECT.md` for complete project details.
 
+## CRITICAL: Document Solved Problems
+
+When a problem is identified and solved, document it in `TROUBLESHOOTING.md`.
+
 ## CRITICAL: Do NOT Start Services
 
 **The user starts all services. You are NOT permitted to start anything.**

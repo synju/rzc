@@ -2,16 +2,6 @@
   <div class="dashboard">
     <header class="header">
       <div class="logo">RZC</div>
-      <div class="header-center">
-        <div class="wallet-selector" v-if="authStore.wallets.length > 0">
-          <select v-model="selectedWalletId" @change="onWalletChange" class="wallet-select">
-            <option v-for="w in authStore.wallets" :key="w.id" :value="w.id">
-              {{ w.name }} ({{ w.address?.slice(0, 6) }}...{{ w.address?.slice(-4) }})
-            </option>
-          </select>
-          <button @click="showWalletManager = true" class="btn-add-wallet">Manage</button>
-        </div>
-      </div>
       <div class="user-menu">
         <span class="email">{{ authStore.user?.email }}</span>
         <button v-if="authStore.isAdmin" @click="goToAdmin" class="btn-admin">Admin</button>
@@ -21,11 +11,24 @@
 
     <main class="main-content">
       <div class="left-column">
+        <div class="wallet-selector" v-if="authStore.wallets.length > 0">
+          <select v-model="selectedWalletId" @change="onWalletChange" class="wallet-select">
+            <option v-for="w in authStore.wallets" :key="w.id" :value="w.id">
+              {{ w.name }} ({{ w.address?.slice(0, 6) }}...{{ w.address?.slice(-4) }})
+            </option>
+          </select>
+          <button @click="showWalletManager = true" class="btn-add-wallet">Manage</button>
+        </div>
+
         <div class="balance-section">
           <div class="balance-card">
+            <button @click="syncTransactions" class="refresh-btn" :disabled="syncingTxs" title="Refresh">
+              <span>{{ syncingTxs ? '⟳' : '🔃' }}</span>
+            </button>
             <span class="balance-label">Total Balance</span>
             <span v-if="syncing" class="balance-value syncing">⟳</span>
             <span v-else class="balance-value">{{ formatBalance(authStore.activeWallet?.balance) }} <small>RZC</small></span>
+            <span class="address-label">Address:</span>
             <span class="balance-address tooltip" @click="copyAddress">{{ authStore.activeWallet?.address }}<span class="tooltip-text">Click to copy</span></span>
           </div>
         </div>
@@ -43,10 +46,6 @@
             <span class="action-icon">📋</span>
             <span class="action-label">Copy Address</span>
           </button>
-          <button @click="syncBalance" class="action-btn" :disabled="syncing">
-            <span class="action-icon">🔄</span>
-            <span class="action-label">Sync Balance</span>
-          </button>
           <button @click="showSendModal = true" class="action-btn">
             <span class="action-icon">📤</span>
             <span class="action-label">Send RZC</span>
@@ -63,11 +62,7 @@
             <span class="action-icon">💲</span>
             <span class="action-label">Buy RZC</span>
           </button>
-          <button @click="showRecreateModal = true" class="action-btn danger">
-            <span class="action-icon">⚠️</span>
-            <span class="action-label">Recreate</span>
-          </button>
-          <button @click="showDeleteModal = true" class="action-btn danger">
+          <button @click="handleDeleteClick" class="action-btn danger">
             <span class="action-icon">🗑️</span>
             <span class="action-label">Delete</span>
           </button>
@@ -88,6 +83,8 @@
               <div class="tx-details">
                 <span class="tx-type-label">{{ tx.type === 'received' ? 'Received' : 'Sent' }}</span>
                 <span class="tx-hash">{{ tx.tx_hash.slice(0, 10) }}...{{ tx.tx_hash.slice(-6) }}</span>
+                <a v-if="tx.tx_hash.startsWith('0x')" :href="`https://snowtrace.io/tx/${tx.tx_hash}`" target="_blank" class="snowtrace-link">View on Snowtrace</a>
+                <span v-else class="internal-label">Internal Transfer</span>
               </div>
               <div class="tx-amount" :class="tx.type">
                 {{ tx.type === 'received' ? '+' : '-' }}{{ formatBalance(tx.amount) }} RZC
@@ -184,24 +181,6 @@
         </div>
         <div class="modal-actions">
           <button @click="showRecipientsModal = false" class="btn btn-secondary">Done</button>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="showRecreateModal" class="modal-overlay" @click.self="showRecreateModal = false">
-      <div class="modal">
-        <h3>Recreate Wallet</h3>
-        <p class="warning-text">This will delete your current wallet and create a new one. Make sure you have transferred any funds!</p>
-        <div class="form-group">
-          <label>Type <strong>RECREATE WALLET</strong> to confirm:</label>
-          <input v-model="recreateConfirm" type="text" placeholder="RECREATE WALLET" class="form-input" />
-        </div>
-        <p v-if="recreateError" class="error">{{ recreateError }}</p>
-        <div class="modal-actions">
-          <button @click="showRecreateModal = false" class="btn btn-secondary">Cancel</button>
-          <button @click="recreateWallet" class="btn btn-danger" :disabled="recreateConfirm !== 'RECREATE WALLET' || recreating">
-            {{ recreating ? 'Recreating...' : 'Recreate Wallet' }}
-          </button>
         </div>
       </div>
     </div>
@@ -333,15 +312,12 @@ const sendForm = ref({ toAddress: '', toAddressManual: '', amount: 0 })
 const sending = ref(false)
 const sendError = ref('')
 const syncing = ref(false)
+const syncingTxs = ref(false)
 const transactions = ref([])
 const recipients = ref([])
 const newRecipient = ref({ name: '', address: '' })
 const recipientError = ref('')
 const recipientSearch = ref('')
-const showRecreateModal = ref(false)
-const recreateConfirm = ref('')
-const recreating = ref(false)
-const recreateError = ref('')
 const showBuyModal = ref(false)
 const showDeleteModal = ref(false)
 const deleteConfirm = ref('')
@@ -426,6 +402,16 @@ const deleteWallet = async () => {
   }
 }
 
+const handleDeleteClick = () => {
+  if (authStore.wallets.length <= 1) {
+    deleteError.value = 'Cannot delete your only wallet. Create another wallet first.'
+    showDeleteModal.value = true
+  } else {
+    deleteError.value = ''
+    showDeleteModal.value = true
+  }
+}
+
 const startRename = (wallet) => {
   editingWalletId.value = wallet.id
   editingWalletName.value = wallet.name
@@ -497,21 +483,6 @@ const createWalletFromManager = async () => {
   }
 }
 
-const recreateWallet = async () => {
-  recreating.value = true
-  recreateError.value = ''
-  try {
-    const response = await walletApi.recreateWallet(authStore.activeWallet.id)
-    await authStore.loadWallets()
-    showRecreateModal.value = false
-    recreateConfirm.value = ''
-  } catch (e) {
-    recreateError.value = e.response?.data?.detail || 'Failed to recreate wallet'
-  } finally {
-    recreating.value = false
-  }
-}
-
 const syncBalance = async () => {
   syncing.value = true
   try {
@@ -522,6 +493,18 @@ const syncBalance = async () => {
     console.error('Sync error:', e)
   } finally {
     syncing.value = false
+  }
+}
+
+const syncTransactions = async () => {
+  syncingTxs.value = true
+  try {
+    await transactionsApi.syncTransactions()
+    await loadTransactions()
+  } catch (e) {
+    console.error('Sync transactions error:', e)
+  } finally {
+    syncingTxs.value = false
   }
 }
 
@@ -666,9 +649,11 @@ onMounted(async () => {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  margin-bottom: 1rem;
 }
 
 .wallet-select {
+  flex: 1;
   padding: 0.5rem 1rem;
   background: #1f1f2e;
   border: 1px solid #333;
@@ -707,31 +692,33 @@ onMounted(async () => {
   font-size: 0.9rem;
 }
 
-.btn-logout {
-  background: transparent;
-  border: 1px solid #333;
-  color: #666;
+.btn-admin, .btn-logout {
+  background: #ffd700;
+  border: none;
+  color: #0d0d14;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .main-content {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 2rem 1.5rem;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
   gap: 2rem;
 }
 
 .left-column {
+  flex: 1;
   display: flex;
   flex-direction: column;
 }
 
 .right-column {
+  flex: 1;
   display: flex;
   flex-direction: column;
 }
@@ -746,6 +733,36 @@ onMounted(async () => {
   padding: 2rem;
   text-align: center;
   border: 1px solid #2a2a40;
+  position: relative;
+}
+
+.refresh-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background: #1f1f2e;
+  color: #ffd700;
+  border-color: #ffd700;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .balance-label {
@@ -772,11 +789,18 @@ onMounted(async () => {
 
 .balance-address {
   font-size: 0.75rem;
-  color: #555;
+  color: #fff;
   font-family: monospace;
   word-break: break-all;
   cursor: pointer;
   position: relative;
+}
+
+.address-label {
+  display: block;
+  color: #666;
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
 }
 
 .tooltip .tooltip-text {
@@ -807,19 +831,18 @@ onMounted(async () => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: #13131f;
-  border: 1px solid #1f1f2e;
-  border-radius: 16px;
+  background: #1f1f2e;
+  border: 1px solid #ffd700;
+  border-radius: 12px;
   padding: 2rem;
   text-align: center;
-  z-index: 200;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  z-index: 1000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 .toast p {
-  margin: 0 0 1.5rem;
-  color: #4caf50;
-  font-weight: 600;
+  color: #fff;
+  margin-bottom: 1.5rem;
 }
 
 .create-wallet-section {
@@ -1017,6 +1040,23 @@ onMounted(async () => {
   font-size: 0.75rem;
   color: #555;
   font-family: monospace;
+}
+
+.snowtrace-link {
+  font-size: 0.7rem;
+  color: #00d4ff;
+  text-decoration: none;
+  margin-top: 0.25rem;
+}
+
+.snowtrace-link:hover {
+  text-decoration: underline;
+}
+
+.internal-label {
+  font-size: 0.7rem;
+  color: #888;
+  margin-top: 0.25rem;
 }
 
 .tx-amount {
