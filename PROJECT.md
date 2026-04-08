@@ -73,8 +73,13 @@ uvicorn app:app --host 0.0.0.0 --port 8001
 
 ### Cloudflare Tunnel (WSL/Linux)
 ```bash
-/tmp/cloudflared tunnel --url http://localhost:8001
+~/.local/bin/cloudflared tunnel --url http://localhost:8001
 ```
+Note: Quick tunnels generate a NEW random URL every restart. When URL changes:
+1. Update `GOOGLE_REDIRECT_URI` in backend `.env`
+2. Update `VITE_API_URL` in mobile `.env`
+3. Update redirect URI in Google Cloud Console
+4. Rebuild mobile app: `npm run build && npx cap sync android`
 
 ### Web Frontend (WSL/Linux)
 ```bash
@@ -121,7 +126,16 @@ uvicorn.run("app:app", host="0.0.0.0", port=settings.port, reload=False)
 - Changed `/auth/callback` to redirect to `{frontend_url}/auth/callback?token=xxx`
 - Frontend `AuthCallback.vue` handles token and calls `/auth/me` to get full user data including `is_admin`
 
-### 5. Missing AsyncSession Import
+### 5. Mobile OAuth Login Flow
+**Problem**: Mobile OAuth requires displaying the JWT token so user can copy it to the mobile app, but web flow auto-redirects to dashboard.
+
+**Solution**: 
+- Mobile calls `/auth/google/login?show_token=true`
+- Backend encodes `show_token:true` in state parameter
+- After Google OAuth, `/auth/callback` returns HTML page with token when `show_token=true`, otherwise redirects to frontend
+- User copies token from web page and pastes into mobile app
+
+### 6. Missing AsyncSession Import
 **Problem**: After rewriting auth.py, other routers lost `AsyncSession` import.
 
 **Solution**: Added to each router file:
@@ -152,8 +166,9 @@ All backend errors are logged to `error.log` in `core-backend/` with full traceb
 ## API Endpoints
 
 ### Auth
-- `GET /auth/google/login` - Redirect to Google OAuth
-- `GET /auth/google/callback` - Handle OAuth callback
+- `GET /auth/google/login` - Redirect to Google OAuth (add `?show_token=true` for mobile)
+- `GET /auth/google/callback` - Handle OAuth callback, redirects based on state
+- `GET /auth/callback` - Returns HTML token page if `show_token=true`, else redirects to frontend
 - `GET /auth/me` - Get current user (includes `is_admin`)
 - `POST /auth/google-mobile` - Mobile OAuth
 
@@ -216,6 +231,23 @@ VITE_API_URL=https://{tunnel_url}
 ### Mobile Login.vue (`...../rzc/core-mobile-frontend/src/views/Login.vue`)
 Uses `import.meta.env.VITE_API_URL` for Browser plugin login - NOT hardcoded
 
+**Mobile OAuth Flow:**
+1. Mobile opens `/auth/google/login?show_token=true` in external browser
+2. Google redirects to `/auth/google/callback?code=xxx`
+3. Backend redirects to `/auth/callback?token=xxx&show_token=true`
+4. Backend returns HTML page with JWT token displayed
+5. User copies token, returns to mobile app, pastes and submits
+
+**Mobile Frontend Features (parity with web):**
+- Wallet management (create, switch, rename, delete, recreate)
+- Send RZC to external addresses
+- Internal transfers between wallets
+- Recipients management
+- Transaction history with Snowtrace links
+- Sync balance and sync transactions
+- Admin dashboard (for admin users)
+- Manual token entry as alternative to OAuth
+
 ## Notes for New Sessions
 
 1. **NO HARDCODED URLs** - Never hardcode any URLs (Cloudflare, API endpoints, etc.) in source code. All URLs must be in `.env` files and accessed programmatically via `import.meta.env` or `settings`
@@ -231,6 +263,22 @@ Uses `import.meta.env.VITE_API_URL` for Browser plugin login - NOT hardcoded
 1. Login with admin email (see `PRIVATE.md`)
 2. Click "Admin" button in header
 3. View admin wallet balances (AVAX + RZC)
+
+## Initial Setup
+
+### Database (PostgreSQL)
+```bash
+# Create database and user
+sudo -u postgres psql
+CREATE USER rzc WITH PASSWORD 'rzc_password';
+CREATE DATABASE rzc_cloud_wallet_db OWNER rzc;
+```
+
+### Google Cloud Console OAuth
+1. Go to Google Cloud Console > APIs & Services > Credentials
+2. Edit the OAuth 2.0 Client ID
+3. Add authorized redirect URI: `https://{cloudflare_tunnel_url}/auth/google/callback`
+4. Update `GOOGLE_REDIRECT_URI` in backend `.env`
 
 ## Tracking Transactions on Snowtrace
 

@@ -15,6 +15,9 @@
 - "Refresh" button on balance card for syncing transaction history
 - Copy to clipboard on admin wallet addresses
 - Snowtrace API fallback for RPC failures (AVAX and RZC balance queries)
+- Mobile AdminDashboard view with AVAX/RZC balances, stats, and recent transactions
+- `syncTransactions` API method for refreshing transaction history
+- Mobile OAuth flow: `show_token` parameter to display token on callback for mobile copy
 
 ### Changed
 - Updated project structure in PROJECT.md
