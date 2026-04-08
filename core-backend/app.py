@@ -23,6 +23,8 @@ def log_error(msg: str):
 async def lifespan(app: FastAPI):
     with open(ERROR_LOG, "w") as f:
         f.write("")
+    with open("google_cloud_uri.txt", "w") as f:
+        f.write(settings.google_redirect_uri)
     await engine.dispose()
     background_sync.start()
     yield

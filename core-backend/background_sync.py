@@ -48,7 +48,7 @@ class BackgroundSync:
         self.running = False
         self._stop_event.set()
         if self.thread:
-            self.thread.join(timeout=5)
+            self.thread.join(timeout=1)
         print("[BackgroundSync] Stopped")
 
     def _run(self):
