@@ -22,7 +22,7 @@ RZC is a cryptocurrency token system built on Avalanche C-Chain with:
 ## Project Structure
 
 ```
-/mnt/e/projects/rzc/
+...../rzc/
 ├── core-backend/           # FastAPI backend
 │   ├── app.py              # Main FastAPI app
 │   ├── database.py         # SQLAlchemy models & engine
@@ -66,7 +66,7 @@ Every 5 minutes, the system syncs all wallets with the blockchain:
 
 ### Backend (WSL/Linux)
 ```bash
-cd /mnt/e/projects/rzc/core-backend
+cd ...../rzc/core-backend
 source venv/bin/activate
 uvicorn app:app --host 0.0.0.0 --port 8001
 ```
@@ -78,7 +78,7 @@ uvicorn app:app --host 0.0.0.0 --port 8001
 
 ### Web Frontend (WSL/Linux)
 ```bash
-cd /mnt/e/projects/rzc/core-web-frontend
+cd ...../rzc/core-web-frontend
 npm run dev
 ```
 
@@ -193,12 +193,12 @@ GOOGLE_REDIRECT_URI=https://{tunnel_url}/auth/google/callback
 FRONTEND_URL=http://localhost:5173
 ```
 
-### Mobile .env (`/mnt/e/projects/rzc/core-mobile-frontend/.env`)
+### Mobile .env (`...../rzc/core-mobile-frontend/.env`)
 ```
 VITE_API_URL=https://{tunnel_url}
 ```
 
-### Mobile Login.vue (`/mnt/e/projects/rzc/core-mobile-frontend/src/views/Login.vue`)
+### Mobile Login.vue (`...../rzc/core-mobile-frontend/src/views/Login.vue`)
 Uses `import.meta.env.VITE_API_URL` for Browser plugin login - NOT hardcoded
 
 ## Notes for New Sessions
@@ -207,7 +207,7 @@ Uses `import.meta.env.VITE_API_URL` for Browser plugin login - NOT hardcoded
 2. **Cloudflare URL changes** - Always check current tunnel URL before testing OAuth (stored in AGENTS.md)
 3. **Backend uses NullPool** - This was necessary to fix async connection issues
 4. **Frontend needs vite restart** - After .env changes
-5. **Mobile needs rebuild** - After code or .env changes (in `/mnt/e/projects/rzc/core-mobile-frontend/`): `npm run build && npx cap sync android`
+5. **Mobile needs rebuild** - After code or .env changes (in `...../rzc/core-mobile-frontend/`): `npm run build && npx cap sync android`
 6. **Private credentials** - See `private.md` (DO NOT COMMIT)
 
 ## Testing Admin Features

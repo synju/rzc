@@ -1,6 +1,6 @@
 # RZC Project Notes
 
-> **Full documentation**: See `/mnt/e/projects/rzc/PROJECT.md` for complete project details.
+> **Full documentation**: See `...../rzc/PROJECT.md` for complete project details.
 
 ## CRITICAL: Do NOT Start Services
 
@@ -44,16 +44,16 @@ For quick tunnels used during development:
 ## Google OAuth Redirect URIs
 
 When the tunnel URL changes:
-1. Update `GOOGLE_REDIRECT_URI` in `/mnt/e/projects/rzc/core-backend/.env`
-2. Update `VITE_API_URL` in `/mnt/e/projects/rzc/core-mobile-frontend/.env`
+1. Update `GOOGLE_REDIRECT_URI` in `...../rzc/core-backend/.env`
+2. Update `VITE_API_URL` in `...../rzc/core-mobile-frontend/.env`
 3. Update the redirect URI in Google Cloud Console
 4. Rebuild and sync the mobile app
 
 ## Cloudflare Tunnel URL
 
-**CURRENT**: `https://explaining-quantum-primary-ward.trycloudflare.com`
+Always changes whenever cloudflare is started up again.
 
 Always update these when URL changes:
-1. Backend: `/mnt/e/projects/rzc/core-backend/.env` → `GOOGLE_REDIRECT_URI`
-2. Mobile: `/mnt/e/projects/rzc/core-mobile-frontend/.env` → `VITE_API_URL`
+1. Backend: `...../rzc/core-backend/.env` → `GOOGLE_REDIRECT_URI`
+2. Mobile: `...../rzc/core-mobile-frontend/.env` → `VITE_API_URL`
 3. Google OAuth Console → redirect URIs
