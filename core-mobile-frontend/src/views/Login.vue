@@ -31,7 +31,8 @@ const error = ref('')
 const success = ref('')
 
 const openWebLogin = async () => {
-  const loginUrl = import.meta.env.VITE_API_URL || 'http://localhost:5173'
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+  const loginUrl = `${baseUrl}/auth/google/login?show_token=true`
   await Browser.open({ url: loginUrl })
 }
 

@@ -70,20 +70,28 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
 
 
 @router.get("/google/login")
-async def google_login():
+async def google_login(show_token: str = "false"):
+    state = secrets.token_urlsafe(16)
+    if show_token == "true":
+        state = f"show_token:true:{state}"
     google_auth_url = (
         f"https://accounts.google.com/o/oauth2/v2/auth?"
         f"client_id={settings.google_client_id}&"
         f"response_type=code&"
         f"scope=openid%20email%20profile&"
         f"redirect_uri={settings.google_redirect_uri}&"
-        f"state={secrets.token_urlsafe(16)}"
+        f"state={state}"
     )
     return RedirectResponse(url=google_auth_url, status_code=302)
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, response: Response):
+async def google_callback(code: str, state: str = ""):
+    show_token = False
+    if state and state.startswith("show_token:true:"):
+        show_token = True
+        state = state.replace("show_token:true:", "")
+    
     try:
         from httpx import AsyncClient
         token_url = "https://oauth2.googleapis.com/token"
@@ -134,6 +142,8 @@ async def google_callback(code: str, response: Response):
             access_token = create_access_token({"sub": user.id, "email": user.email})
 
             callback_url = f"{get_base_url()}/auth/callback?token={access_token}"
+            if show_token:
+                callback_url += "&show_token=true"
             return RedirectResponse(url=callback_url, status_code=302)
     except HTTPException:
         raise
@@ -153,7 +163,43 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/callback")
-async def auth_callback(token: str):
+async def auth_callback(token: str, show_token: str = ""):
+    if show_token == "true":
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>RZC Login</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d0d14; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; padding: 20px; box-sizing: border-box; }}
+                .container {{ text-align: center; max-width: 500px; width: 100%; }}
+                h2 {{ color: #4caf50; margin-bottom: 1rem; }}
+                p {{ color: #888; margin-bottom: 1.5rem; }}
+                .token-box {{ background: #1f1f2e; border: 1px solid #333; border-radius: 8px; padding: 1rem; font-family: monospace; font-size: 0.85rem; word-break: break-all; color: #ffd700; margin-bottom: 1rem; max-height: 150px; overflow-y: auto; text-align: left; }}
+                .btn {{ background: #ffd700; color: #0d0d14; border: none; padding: 0.75rem 2rem; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem; }}
+                .btn:hover {{ background: #ffed4a; }}
+                .copied {{ color: #4caf50; margin-top: 1rem; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>Login Successful!</h2>
+                <p>Copy your token below and paste it in the mobile app:</p>
+                <div class="token-box" id="token">{token}</div>
+                <button class="btn" onclick="copyToken()">Copy Token</button>
+                <p id="copied" class="copied" style="display:none;">Copied!</p>
+            </div>
+            <script>
+                function copyToken() {{
+                    navigator.clipboard.writeText(document.getElementById('token').innerText);
+                    document.getElementById('copied').style.display = 'block';
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
     return RedirectResponse(url=f"{settings.frontend_url}/auth/callback?token={token}", status_code=302)
 
 

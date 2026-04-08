@@ -3,6 +3,7 @@
     <header class="header">
       <div class="logo">RZC</div>
       <div class="header-buttons">
+        <span v-if="authStore.user?.email" class="user-email">{{ authStore.user?.email }}</span>
         <button v-if="authStore.isAdmin" @click="goToAdmin" class="btn-admin">Admin</button>
         <button @click="handleLogout" class="btn-logout">Logout</button>
       </div>
@@ -62,14 +63,19 @@
           <span class="action-icon">⚠️</span>
           <span>Recreate</span>
         </button>
-        <button @click="showDeleteModal = true" class="action-btn danger">
+        <button @click="handleDeleteClick" class="action-btn danger">
           <span class="action-icon">🗑️</span>
           <span>Delete</span>
         </button>
       </div>
 
       <div class="transactions-section">
-        <h3>Transaction History</h3>
+        <div class="section-header">
+          <h3>Transaction History</h3>
+          <button @click="syncTransactions" class="btn-refresh" :disabled="syncingTxs">
+            {{ syncingTxs ? '⟳' : '🔃' }}
+          </button>
+        </div>
         <div v-if="transactions.length === 0" class="no-tx">
           <p>No transactions yet</p>
         </div>
@@ -81,9 +87,11 @@
             <div class="tx-details">
               <span class="tx-type-label">{{ tx.type === 'received' ? 'Received' : 'Sent' }}</span>
               <span class="tx-hash">{{ tx.tx_hash.slice(0, 8) }}...{{ tx.tx_hash.slice(-6) }}</span>
+              <a v-if="tx.tx_hash.startsWith('0x')" :href="`https://snowtrace.io/tx/${tx.tx_hash}`" target="_blank" class="snowtrace-link">View on Snowtrace</a>
+              <span v-else class="internal-label">Internal Transfer</span>
             </div>
             <div class="tx-amount" :class="tx.type">
-              {{ tx.type === 'received' ? '+' : '-' }}{{ formatBalance(tx.amount) }}
+              {{ tx.type === 'received' ? '+' : '-' }}{{ formatBalance(tx.amount) }} RZC
             </div>
           </div>
         </div>
@@ -91,7 +99,7 @@
     </main>
 
     <div v-if="showCopiedToast" class="toast">
-      <p>Address copied!</p>
+      <p>Wallet address copied!</p>
       <button @click="showCopiedToast = false" class="btn btn-primary">OK</button>
     </div>
 
@@ -307,6 +315,7 @@ const sendForm = ref({ toAddress: '', toAddressManual: '', amount: 0 })
 const sending = ref(false)
 const sendError = ref('')
 const syncing = ref(false)
+const syncingTxs = ref(false)
 const transactions = ref<any[]>([])
 const recipients = ref<any[]>([])
 const newRecipient = ref({ name: '', address: '' })
@@ -342,6 +351,28 @@ const filteredRecipients = computed(() => {
 const formatBalance = (balance: any) => {
   if (!balance) return '0.0000'
   return (Number(balance) / 1e18).toFixed(4)
+}
+
+const handleDeleteClick = () => {
+  if (authStore.wallets.length <= 1) {
+    deleteError.value = 'Cannot delete your only wallet. Create another wallet first.'
+    showDeleteModal.value = true
+  } else {
+    deleteError.value = ''
+    showDeleteModal.value = true
+  }
+}
+
+const syncTransactions = async () => {
+  syncingTxs.value = true
+  try {
+    await transactionsApi.syncTransactions()
+    await loadTransactions()
+  } catch (e) {
+    console.error('Sync transactions error:', e)
+  } finally {
+    syncingTxs.value = false
+  }
 }
 
 const showWalletManager = ref(false)
@@ -625,6 +656,16 @@ onMounted(async () => {
 .header-buttons {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+}
+
+.user-email {
+  color: #666;
+  font-size: 0.75rem;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn-admin {
@@ -799,7 +840,33 @@ onMounted(async () => {
 .transactions-section h3 {
   color: #ffd700;
   font-size: 0.9rem;
-  margin: 0 0 0.75rem;
+  margin: 0;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.btn-refresh {
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .no-tx {
@@ -859,6 +926,19 @@ onMounted(async () => {
   font-size: 0.6rem;
   color: #555;
   font-family: monospace;
+}
+
+.snowtrace-link {
+  font-size: 0.6rem;
+  color: #00d4ff;
+  text-decoration: none;
+  margin-top: 0.15rem;
+}
+
+.internal-label {
+  font-size: 0.6rem;
+  color: #888;
+  margin-top: 0.15rem;
 }
 
 .tx-amount {

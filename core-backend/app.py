@@ -3,7 +3,7 @@ import traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 from database import Base, engine, get_db, User, Wallet, settings
 from routers import auth, wallet, transactions, recipients, admin
